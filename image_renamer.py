@@ -6,6 +6,7 @@ import logging
 from PIL import Image
 from PIL.ExifTags import TAGS
 from pathlib import Path
+import shutil
 
 img_formats = ['.png', '.jpg', '.jpeg']
 
@@ -21,11 +22,11 @@ def parse_args():
     parser.add_argument('--recursive', '-r', dest='recursive', action='store_true',
                         help='Search for images recursively in directories.')
     parser.add_argument('--overwrite', '-f', dest='force_overwrite', action='store_true',
-                        help='Force overwrite of existing image files.')
+                        help='Force overwrite of existing image files. Otherwise, a D is appended to the filename.')
     parser.add_argument('--skip', '-s', dest='skip_overwrite_prompt', action='store_true',
                         help='If a duplicate file is found, do not overwrite and do not ask user.')
-    parser.add_argument('--delete-original', '-D', dest='delete_original_file', action='store_true',
-                        help='Delete original image file after successfully renaming it.')
+    parser.add_argument('--delete-orig', '-D', dest='delete_originals', action='store_true',
+                        help='Moves the originals with new names. Without this option, a copy is made instead with a new name.')
 
     return parser.parse_args()
 
@@ -94,22 +95,24 @@ def main():
         except:
             logger.warning(f"Failed to find suitable EXIF data to rename. EXIF Data =  {decoded_exif_data}")
             continue
+        
+        duplicate_exists = os.path.isfile(new_filepath)
+        if duplicate_exists and args.skip_overwrite_prompt:
+            continue
+        if not args.force_overwrite:
+            while(duplicate_exists):
+                new_filepath = os.path.splitext(new_filepath)[0] + "D" + os.path.splitext(new_filepath)[1]
+                duplicate_exists = os.path.isfile(new_filepath)
 
-        if os.path.isfile(new_filepath) and not args.force_overwrite:
-            if args.skip_overwrite_prompt:
-                continue
-            print(f"File {new_filepath} already exists! Overwrite it? [Y/N]")
-            response = input().lower()
-            if "n" in response:
-                continue
 
-        image.save(new_filepath)
-        logger.info(f"Copied and renamed {f} to {new_filepath}.")
+        if args.delete_originals:
+            os.rename(f, new_filepath)
+            logger.info(f"Moved {f} to {new_filepath}.")
+        else:
+            shutil.copyfile(f, new_filepath)
+            logger.info(f"Copied {f} to {new_filepath}.")
+            
         converted_count += 1
-
-        if args.delete_original_file:
-            os.remove(f)
-            logger.info(f"Deleted {f}")
 
     logger.info(f"Jobs completed. Renamed {converted_count} of {num_files} files")
 
