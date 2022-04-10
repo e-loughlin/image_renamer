@@ -17,14 +17,14 @@ USE AT YOUR OWN RISK. This script CAN DELETE FILES.
 
 ## Running
 
-Rename a single image:
-`python image_renamer.py -f <image_path>`
-
-Rename an entire directory of image files:
-`python image_renamer.py -d <directory>`
-
-Rename an entire directory of image files:
-`python image_renamer.py -d <directory>`
+Copy an entire directory of image files, saving them in the output directory.:
+`python image_renamer.py -i <directory> -o <output_dir>`
 
 Rename an entire directory of image files (recursively):
-`python image_renamer.py -d <directory> -r`
+`python image_renamer.py -d <directory> -o <output_dir> -r`
+
+`-D` : Also delete the original source image, only after it's been successfully saved under a different name elsewhere.
+`--skip`: If a duplicate destination file is found, skips that image altogether. Will not delete the file in this case.
+`--overwrite`: If a duplicate destination file is found, overwrites that image altogether.
+
+If neither `--skip` or `--overwrite` flags are selected, the user will be prompted for their input on each file. 
