@@ -68,7 +68,12 @@ def main():
     converted_count = 0 
     for f in image_files:
         logger.info(f"Opening image: {f}...")
-        image = Image.open(f)
+        try:
+            image = Image.open(f)
+        except Exception as e:
+            logger.warning(f"Failed to open file {f}")
+            logger.debug(e)
+            continue
         exifdata = image.getexif()
 
         decoded_exif_data = {}
