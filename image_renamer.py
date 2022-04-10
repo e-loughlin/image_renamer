@@ -86,8 +86,8 @@ def main():
             orig_ext = os.path.splitext(f)[-1]
             new_filename = decoded_exif_data["DateTimeOriginal"].replace(":", "-").replace(" ", "_") + orig_ext
             new_filepath = os.path.join(args.output_directory, new_filename)
-        except Exception as e:
-            logger.warning(f"Failed to find suitable EXIF data to rename: {decoded_exif_data}")
+        except:
+            logger.warning(f"Failed to find suitable EXIF data to rename. EXIF Data =  {decoded_exif_data}")
             continue
 
         if os.path.isfile(new_filepath) and not args.force_overwrite:
