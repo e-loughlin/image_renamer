@@ -5,6 +5,7 @@ import glob
 import logging
 from PIL import Image
 from PIL.ExifTags import TAGS
+from pathlib import Path
 
 img_formats = ['.png', '.jpg', '.jpeg']
 
@@ -19,8 +20,12 @@ def parse_args():
                         help='Directory in which to save the new files.')
     parser.add_argument('--recursive', '-r', dest='recursive', action='store_true',
                         help='Search for images recursively in directories.')
-    parser.add_argument('--force', '-f', dest='force_overwrite', action='store_true',
+    parser.add_argument('--overwrite', '-f', dest='force_overwrite', action='store_true',
                         help='Force overwrite of existing image files.')
+    parser.add_argument('--skip', '-s', dest='skip_overwrite_prompt', action='store_true',
+                        help='If a duplicate file is found, do not overwrite and do not ask user.')
+    parser.add_argument('--delete-original', '-D', dest='delete_original_file', action='store_true',
+                        help='Delete original image file after successfully renaming it.')
 
     return parser.parse_args()
 
@@ -48,7 +53,11 @@ def main():
 
     logger.info(f"Searching for images in {image_dir}...")
 
-    files = glob.glob(image_dir + '**/*', recursive=args.recursive)
+    if args.recursive:
+        files = list(Path(image_dir).rglob("*"))
+    else:
+        files = list(Path(image_dir).glob("*"))
+
     image_files = list(filter(is_image_file, files))
     num_files = len(image_files)
 
@@ -69,31 +78,35 @@ def main():
             tag = TAGS.get(tag_id, tag_id)
             data = exifdata.get(tag_id)
             # Decode bytes 
-            try:
-                if isinstance(data, bytes):
-                    data = data.decode()
-                decoded_exif_data[tag] = data
-            except:
-                logger.warn("Failed to parse some EXIF data...")
+            # if isinstance(data, bytes):
+                # data = data.decode()
+            decoded_exif_data[tag] = data
 
         try:
             orig_ext = os.path.splitext(f)[-1]
             new_filename = decoded_exif_data["DateTimeOriginal"].replace(":", "-").replace(" ", "_") + orig_ext
             new_filepath = os.path.join(args.output_directory, new_filename)
+        except Exception as e:
+            logger.warning(f"Failed to find suitable EXIF data to rename: {decoded_exif_data}")
+            continue
 
-            if os.path.isfile(new_filepath) and not args.force_overwrite:
-                print(f"File {new_filepath} already exists! Overwrite it? [Y/N]")
-                response = input().lower()
-                if "n" in response:
-                    continue
+        if os.path.isfile(new_filepath) and not args.force_overwrite:
+            if args.skip_overwrite_prompt:
+                continue
+            print(f"File {new_filepath} already exists! Overwrite it? [Y/N]")
+            response = input().lower()
+            if "n" in response:
+                continue
 
-            image.save(new_filepath)
-            logger.info(f"Copied and renamed {f} to {new_filepath}.")
-            converted_count += 1
-        except:
-            logger.warn(f"Failed to convert file {f}")
+        image.save(new_filepath)
+        logger.info(f"Copied and renamed {f} to {new_filepath}.")
+        converted_count += 1
 
-    logger.info(f"Jobs completed. Renamed {converted_count} files")
+        if args.delete_original_file:
+            os.remove(f)
+            logger.info(f"Deleted {f}")
+
+    logger.info(f"Jobs completed. Renamed {converted_count} of {num_files} files")
 
 if __name__ == "__main__":
     main()
