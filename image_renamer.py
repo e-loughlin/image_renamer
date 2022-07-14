@@ -88,9 +88,15 @@ def main():
                 # data = data.decode()
             decoded_exif_data[tag] = data
 
+        date_time_idx = "DateTimeOriginal"
+        try:
+            decoded_exif_data[date_time_idx]
+        except:
+            date_time_idx = "DateTime"
+
         try:
             orig_ext = os.path.splitext(f)[-1]
-            new_filename = decoded_exif_data["DateTimeOriginal"].replace(":", "-").replace(" ", "_") + orig_ext
+            new_filename = decoded_exif_data[date_time_idx].replace(":", "-").replace(" ", "_") + orig_ext
             new_filepath = os.path.join(args.output_directory, new_filename)
         except:
             logger.warning(f"Failed to find suitable EXIF data to rename. EXIF Data =  {decoded_exif_data}")
