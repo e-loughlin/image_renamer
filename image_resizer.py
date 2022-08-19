@@ -22,12 +22,14 @@ def parse_args():
     parser.add_argument('--recursive', '-r', dest='recursive', action='store_true',
                         help='Search for images recursively in directories.')
     parser.add_argument('--overwrite', '-f', dest='force_overwrite', action='store_true',
-                        help='Force overwrite of existing image files. Otherwise, a D is appended to the filename.')
+                        help='Force overwrite of existing image files. Otherwise, the word RESIZED is appended to the filename.')
     parser.add_argument('--skip', '-s', dest='skip_overwrite_prompt', action='store_true',
                         help='If a duplicate file is found, do not overwrite and do not ask user.')
     parser.add_argument('--delete-orig', '-D', dest='delete_originals', action='store_true',
-                        help='Moves the originals with new names. Without this option, a copy is made instead with a new name.')
-                        
+                        help='Deletes the original photos')
+    parser.add_argument('--resize_max_dim_pix', '--resize', dest='resize_max_dim_pix', required=True, type=int,
+                        help='Resize the resulting image such that the greatest dimension is equal to the value. Image will scale proportionally.')
+
     return parser.parse_args()
 
 def main():
@@ -75,52 +77,53 @@ def main():
             logger.warning(f"Failed to open file {f}")
             logger.debug(e)
             continue
-        exifdata = image.getexif()
 
-        decoded_exif_data = {}
+        file_name = os.path.basename(f)
 
-        for tag_id in exifdata:
-            # Get the tag name, instead of human unreadable tag id
-            tag = TAGS.get(tag_id, tag_id)
-            data = exifdata.get(tag_id)
-            # Decode bytes 
-            # if isinstance(data, bytes):
-                # data = data.decode()
-            decoded_exif_data[tag] = data
+        new_filepath = os.path.join(args.output_directory, file_name)
 
-        date_time_idx = "DateTimeOriginal"
-        try:
-            decoded_exif_data[date_time_idx]
-        except:
-            date_time_idx = "DateTime"
-
-        try:
-            orig_ext = os.path.splitext(f)[-1]
-            new_filename = decoded_exif_data[date_time_idx].replace(":", "-").replace(" ", "_") + orig_ext
-            new_filepath = os.path.join(args.output_directory, new_filename)
-        except:
-            logger.warning(f"Failed to find suitable EXIF data to rename. EXIF Data =  {decoded_exif_data}")
-            continue
-        
         duplicate_exists = os.path.isfile(new_filepath)
         if duplicate_exists and args.skip_overwrite_prompt:
             continue
         if not args.force_overwrite:
             while(duplicate_exists):
-                new_filepath = os.path.splitext(new_filepath)[0] + "D" + os.path.splitext(new_filepath)[1]
+                new_filepath = os.path.splitext(new_filepath)[0] + "_RESIZED" + os.path.splitext(new_filepath)[1]
                 duplicate_exists = os.path.isfile(new_filepath)
 
+        shutil.copyfile(f, new_filepath)
+        max_dim = args.resize_max_dim_pix
+        x, y = image.size
 
-        if args.delete_originals:
-            os.rename(f, new_filepath)
-            logger.info(f"Moved {f} to {new_filepath}.")
-        else:
+        biggest_dim = x if x > y else y
+
+        if max_dim > biggest_dim:
+            logger.warning(f"Images can only reduced in size. Max dimension {max_dim} is greater than image size = {image.size}")
             shutil.copyfile(f, new_filepath)
-            logger.info(f"Copied {f} to {new_filepath}.")
+            continue
+
+        if x > y:
+            ratio = max_dim / float(x)
+        else:
+            ratio = max_dim / float(y)
+        
+        new_x = ratio * x
+        new_y = ratio * y
+
+        resized_image = image.resize((int(new_x), int(new_y)))
+
+        try:
+            exif = image.info['exif']
+            resized_image.save(new_filepath, exif=exif)
+        except:
+            logger.warning(f"No EXIF data found.")
+            resized_image.save(new_filepath)
+            continue
+
+        logger.info(f"Resized {f} to {new_filepath}.")
             
         converted_count += 1
 
-    logger.info(f"Jobs completed. Renamed {converted_count} of {num_files} files")
+    logger.info(f"Jobs completed. Resized {converted_count} of {num_files} files")
 
 if __name__ == "__main__":
     main()
