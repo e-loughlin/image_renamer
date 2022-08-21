@@ -3,10 +3,9 @@ import os
 import sys
 import glob
 import logging
-from PIL import Image
-from PIL.ExifTags import TAGS
 from pathlib import Path
 import shutil
+from exif import Image
 
 img_formats = ['.png', '.jpg', '.jpeg']
 
@@ -27,7 +26,7 @@ def parse_args():
                         help='If a duplicate file is found, do not overwrite and do not ask user.')
     parser.add_argument('--delete-orig', '-D', dest='delete_originals', action='store_true',
                         help='Moves the originals with new names. Without this option, a copy is made instead with a new name.')
-                        
+
     return parser.parse_args()
 
 def main():
@@ -70,36 +69,21 @@ def main():
     for f in image_files:
         logger.info(f"Opening image: {f}...")
         try:
-            image = Image.open(f)
+            with open(f, "rb") as img_file:
+                image = Image(img_file)
         except Exception as e:
             logger.warning(f"Failed to open file {f}")
             logger.debug(e)
             continue
-        exifdata = image.getexif()
 
-        decoded_exif_data = {}
-
-        for tag_id in exifdata:
-            # Get the tag name, instead of human unreadable tag id
-            tag = TAGS.get(tag_id, tag_id)
-            data = exifdata.get(tag_id)
-            # Decode bytes 
-            # if isinstance(data, bytes):
-                # data = data.decode()
-            decoded_exif_data[tag] = data
-
-        date_time_idx = "DateTimeOriginal"
-        try:
-            decoded_exif_data[date_time_idx]
-        except:
-            date_time_idx = "DateTime"
+        date_time = image.get("datetime_original")
 
         try:
             orig_ext = os.path.splitext(f)[-1]
-            new_filename = decoded_exif_data[date_time_idx].replace(":", "-").replace(" ", "_") + orig_ext
+            new_filename = date_time.replace(":", "-").replace(" ", "_") + orig_ext
             new_filepath = os.path.join(args.output_directory, new_filename)
         except:
-            logger.warning(f"Failed to find suitable EXIF data to rename. EXIF Data =  {decoded_exif_data}")
+            logger.warning(f"Failed to find suitable EXIF data to rename. EXIF Data =  {image.list_all()}")
             continue
         
         duplicate_exists = os.path.isfile(new_filepath)
