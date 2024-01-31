@@ -1,10 +1,11 @@
 import argparse
-import os
-import sys
 import glob
 import logging
-from pathlib import Path
+import os
 import shutil
+import sys
+from pathlib import Path
+
 from exif import Image
 
 img_formats = ['.png', '.jpg', '.jpeg']
@@ -76,7 +77,11 @@ def main():
             logger.debug(e)
             continue
 
-        date_time = image.get("datetime_original")
+        try:
+            date_time = image.get("datetime_original")
+        except:
+            logger.warning("Failed to find datetime_original.")
+            continue
 
         try:
             orig_ext = os.path.splitext(f)[-1]
