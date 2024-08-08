@@ -8,7 +8,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 # If modifying these SCOPES, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/photoslibrary.appendonly"]
+SCOPES = ["https://www.googleapis.com/auth/photoslibrary"]
 
 
 def authenticate():

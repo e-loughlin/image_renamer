@@ -30,8 +30,20 @@ Rename an entire directory of image files (recursively):
 If neither `--skip` or `--overwrite` flags are selected, the user will be prompted for their input on each file. 
 
 
-# Google File Uploader
+# Google File Uploader / Downloader
 
 Store a credentials.json Google authentication file in the home directory. Then run `python google_uploader.py /path/to/photo/dir`.
 
 Instructions on how to get that credentials JSON can be found here: https://developers.google.com/photos/library/guides/get-started
+
+
+# All-In-One Tool
+
+1. Figure out dates you want to transfer photos from.
+2. Run script to download all photos between those dates from Google API and save them to the external Hard Drive.
+3. Plug in your phone / device. Copy photos from there to some drive on the external Hard Drive.
+4. Copy / rename all photos from both locations to the same place, and delete duplicates.
+5. Files being transfered in this way should detect which subfolder they belong to. If they're not proper EXIF photos, they should be organized as such.
+6. Run the image_resizer from the external drive to back them up in local storage in the Mac.
+7. Delete all files from Google between those dates.
+8. Run the google_uploader.py script 
