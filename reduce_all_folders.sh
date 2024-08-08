@@ -3,7 +3,7 @@
 targetDir=$1
 destDir=$2
 
-for folder in $targetDir/*; do
+for folder in $targetDir/201[1-9]*; do
     if [ -d "$folder" ]; then
         folderName=$(basename "$folder")
         mkdir "$destDir/$folderName"
