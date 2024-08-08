@@ -45,5 +45,5 @@ Instructions on how to get that credentials JSON can be found here: https://deve
 4. Copy / rename all photos from both locations to the same place, and delete duplicates.
 5. Files being transfered in this way should detect which subfolder they belong to. If they're not proper EXIF photos, they should be organized as such.
 6. Run the image_resizer from the external drive to back them up in local storage in the Mac.
-7. Delete all files from Google between those dates.
-8. Run the google_uploader.py script 
+7. Delete all files from Google between those dates. (This should be MANUAL)
+8. Run the google_uploader.py script from the MacOS backup to the Google one
