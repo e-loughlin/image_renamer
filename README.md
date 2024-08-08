@@ -28,3 +28,10 @@ Rename an entire directory of image files (recursively):
 `--overwrite`: If a duplicate destination file is found, overwrites that image altogether.
 
 If neither `--skip` or `--overwrite` flags are selected, the user will be prompted for their input on each file. 
+
+
+# Google File Uploader
+
+Store a credentials.json Google authentication file in the home directory. Then run `python google_uploader.py /path/to/photo/dir`.
+
+Instructions on how to get that credentials JSON can be found here: https://developers.google.com/photos/library/guides/get-started
