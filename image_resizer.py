@@ -96,110 +96,135 @@ def main():
         logger.critical(f"Specified directory was not found: {args.output_directory}")
         sys.exit()
 
-    logger.info(f"Searching for images in {image_dir}...")
+    logger.info(f"Searching for files in {image_dir}...")
 
     if args.recursive:
         files = list(Path(image_dir).rglob("*"))
     else:
         files = list(Path(image_dir).glob("*"))
 
-    image_files = list(filter(is_image_file, files))
-    num_files = len(image_files)
+    num_files = len(files)
 
     logger.info(f"Found {num_files} files. Processing...")
 
     converted_count = 0
-    for f in image_files:
-        logger.info(f"Opening image: {f}...")
-        try:
-            image = Image.open(f)
-        except Exception as e:
-            logger.warning(f"Failed to open file {f}")
-            logger.debug(e)
+    for f in files:
+        logger.info(f"Processing file: {f}...")
+
+        if f.is_dir():  # Skip directories
+            logger.info(f"Ignoring directory: {f}")
             continue
 
-        try:
-            # Extract EXIF data for datetime
-            exif_data = image._getexif()
-            if exif_data:
-                for tag, value in exif_data.items():
-                    tag_name = TAGS.get(tag, tag)
-                    if tag_name == "DateTimeOriginal":
-                        date_time = value
-                        break
+        if is_image_file(f):
+            try:
+                image = Image.open(f)
+            except Exception as e:
+                logger.warning(f"Failed to open image file {f}: {e}")
+                # Attempt to copy file to the "Other" folder
+                other_directory = os.path.join(args.output_directory, "Other")
+                os.makedirs(other_directory, exist_ok=True)
+                shutil.copyfile(f, os.path.join(other_directory, os.path.basename(f)))
+                continue
+
+            try:
+                # Extract EXIF data for datetime
+                exif_data = image._getexif()
+                if exif_data:
+                    for tag, value in exif_data.items():
+                        tag_name = TAGS.get(tag, tag)
+                        if tag_name == "DateTimeOriginal":
+                            date_time = value
+                            break
+                    else:
+                        date_time = None
                 else:
                     date_time = None
-            else:
-                date_time = None
 
-            if date_time is None:
-                raise ValueError("No DateTimeOriginal found in EXIF data.")
-            year = date_time.split(":")[0]  # Extract the year from DateTimeOriginal
-        except Exception as e:
-            logger.warning(
-                f"Failed to find suitable EXIF data to organize for {f}. Error: {e}"
-            )
-            year = "Other"
+                if date_time is None:
+                    raise ValueError("No DateTimeOriginal found in EXIF data.")
+                year = date_time.split(":")[0]  # Extract the year from DateTimeOriginal
+            except Exception as e:
+                logger.warning(f"Failed to find suitable EXIF data for {f}: {e}")
+                year = "Other"
 
-        # Create the year directory or "Other" directory if it doesn't exist
-        year_directory = os.path.join(args.output_directory, year)
-        if not os.path.exists(year_directory):
-            os.makedirs(year_directory)
-            logger.info(f"Created directory: {year_directory}")
+            # Create the year directory or "Other" directory if it doesn't exist
+            year_directory = os.path.join(args.output_directory, year)
+            if not os.path.exists(year_directory):
+                os.makedirs(year_directory)
+                logger.info(f"Created directory: {year_directory}")
 
-        file_name = os.path.basename(f)
-        new_filepath = os.path.join(year_directory, file_name)
+            file_name = os.path.basename(f)
+            new_filepath = os.path.join(year_directory, file_name)
 
-        duplicate_exists = os.path.isfile(new_filepath)
-        if duplicate_exists and args.skip_overwrite_prompt:
-            continue
-        if not args.force_overwrite:
-            while duplicate_exists:
-                new_filepath = (
-                    os.path.splitext(new_filepath)[0]
-                    + "_RESIZED"
-                    + os.path.splitext(new_filepath)[1]
+            duplicate_exists = os.path.isfile(new_filepath)
+            if duplicate_exists and args.skip_overwrite_prompt:
+                continue
+            if not args.force_overwrite:
+                while duplicate_exists:
+                    new_filepath = (
+                        os.path.splitext(new_filepath)[0]
+                        + "_RESIZED"
+                        + os.path.splitext(new_filepath)[1]
+                    )
+                    duplicate_exists = os.path.isfile(new_filepath)
+
+            max_dim = args.resize_max_dim_pix
+            x, y = image.size
+
+            biggest_dim = max(x, y)
+
+            if max_dim > biggest_dim:
+                logger.warning(
+                    f"Max dimension {max_dim} is greater than image size = {image.size}. Copying file without resizing."
                 )
-                duplicate_exists = os.path.isfile(new_filepath)
+                shutil.copyfile(f, new_filepath)
+                continue
 
-        max_dim = args.resize_max_dim_pix
-        x, y = image.size
+            try:
+                if x > y:
+                    ratio = max_dim / float(x)
+                else:
+                    ratio = max_dim / float(y)
 
-        biggest_dim = x if x > y else y
+                new_x = int(ratio * x)
+                new_y = int(ratio * y)
 
-        if max_dim > biggest_dim:
-            logger.warning(
-                f"Images can only be reduced in size. Max dimension {max_dim} is greater than image size = {image.size}"
-            )
-            shutil.copyfile(f, new_filepath)
-            continue
+                resized_image = image.resize((new_x, new_y))
 
-        if x > y:
-            ratio = max_dim / float(x)
+                # Convert to RGB if needed before saving
+                if resized_image.mode != "RGB":
+                    resized_image = resized_image.convert("RGB")
+
+                try:
+                    exif = image.info.get("exif")
+                    resized_image.save(new_filepath, exif=exif)
+                except:
+                    logger.warning(f"No EXIF data found. Saving without EXIF.")
+                    resized_image.save(new_filepath)
+            except Exception as e:
+                logger.warning(f"Failed to resize image {f}: {e}")
+                # Copy file to the "Other" folder
+                other_directory = os.path.join(args.output_directory, "Other")
+                os.makedirs(other_directory, exist_ok=True)
+                shutil.copyfile(f, os.path.join(other_directory, os.path.basename(f)))
+                continue
+
+            if args.delete_originals:
+                os.remove(f)
+                logger.info(f"Deleted original image: {f}")
+
+            logger.info(f"Resized {f} to {new_filepath}.")
+            converted_count += 1
+
         else:
-            ratio = max_dim / float(y)
+            # Handle non-image files by copying them directly to the output directory
+            year_from_path = f.parts[-2] if len(f.parts) >= 2 else "Other"
+            year_directory = os.path.join(args.output_directory, year_from_path)
+            os.makedirs(year_directory, exist_ok=True)
+            logger.info(f"Copying non-image file {f} to {year_directory}...")
+            shutil.copyfile(f, os.path.join(year_directory, os.path.basename(f)))
 
-        new_x = ratio * x
-        new_y = ratio * y
-
-        resized_image = image.resize((int(new_x), int(new_y)))
-
-        try:
-            exif = image.info.get("exif")
-            resized_image.save(new_filepath, exif=exif)
-        except:
-            logger.warning(f"No EXIF data found.")
-            resized_image.save(new_filepath)
-
-        if args.delete_originals:
-            os.remove(f)
-            logger.info(f"Deleted original image: {f}")
-
-        logger.info(f"Resized {f} to {new_filepath}.")
-
-        converted_count += 1
-
-    logger.info(f"Jobs completed. Resized {converted_count} of {num_files} files")
+    logger.info(f"Jobs completed. Processed {converted_count} of {num_files} files.")
 
 
 if __name__ == "__main__":

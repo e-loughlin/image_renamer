@@ -96,6 +96,7 @@ def download_photo(session, media_item, download_dir):
 
 
 def main(start_date_str, end_date_str, download_dir):
+    print("Starting google_downloader...")
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
     end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
 

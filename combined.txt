@@ -1,0 +1,832 @@
+
+--- FILE: ./image_resizer.py ---
+import argparse
+import logging
+import os
+import shutil
+import sys
+from pathlib import Path
+
+from PIL import Image
+from PIL.ExifTags import TAGS
+
+img_formats = [".png", ".jpg", ".jpeg"]
+
+
+def is_image_file(filepath):
+    return os.path.splitext(filepath)[-1].lower() in img_formats
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--input-directory",
+        "-i",
+        dest="input_directory",
+        type=str,
+        required=True,
+        help="Directory in which to search for images and rename them.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        dest="output_directory",
+        type=str,
+        required=True,
+        help="Root directory in which to save the resized files by year.",
+    )
+    parser.add_argument(
+        "--recursive",
+        "-r",
+        dest="recursive",
+        action="store_true",
+        help="Search for images recursively in directories.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        "-f",
+        dest="force_overwrite",
+        action="store_true",
+        help="Force overwrite of existing image files. Otherwise, the word RESIZED is appended to the filename.",
+    )
+    parser.add_argument(
+        "--skip",
+        "-s",
+        dest="skip_overwrite_prompt",
+        action="store_true",
+        help="If a duplicate file is found, do not overwrite and do not ask user.",
+    )
+    parser.add_argument(
+        "--delete-orig",
+        "-D",
+        dest="delete_originals",
+        action="store_true",
+        help="Deletes the original photos.",
+    )
+    parser.add_argument(
+        "--resize_max_dim_pix",
+        "--resize",
+        dest="resize_max_dim_pix",
+        required=True,
+        type=int,
+        help="Resize the resulting image such that the greatest dimension is equal to the value. Image will scale proportionally.",
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    logging.basicConfig(
+        handlers=[logging.FileHandler("debug.log"), logging.StreamHandler()],
+        format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+        level=logging.INFO,
+    )
+
+    logger = logging.getLogger(__name__)
+
+    image_dir = os.path.abspath(args.input_directory)
+    args.input_directory = image_dir
+    args.output_directory = os.path.abspath(args.output_directory)
+
+    logger.info(f"Initiating new run with args: {args}")
+    if not os.path.isdir(image_dir):
+        logger.critical(f"Specified directory was not found: {image_dir}")
+        sys.exit()
+    if not os.path.isdir(args.output_directory):
+        logger.critical(f"Specified directory was not found: {args.output_directory}")
+        sys.exit()
+
+    logger.info(f"Searching for files in {image_dir}...")
+
+    if args.recursive:
+        files = list(Path(image_dir).rglob("*"))
+    else:
+        files = list(Path(image_dir).glob("*"))
+
+    num_files = len(files)
+
+    logger.info(f"Found {num_files} files. Processing...")
+
+    converted_count = 0
+    for f in files:
+        logger.info(f"Processing file: {f}...")
+
+        if f.is_dir():  # Skip directories
+            logger.info(f"Ignoring directory: {f}")
+            continue
+
+        if is_image_file(f):
+            try:
+                image = Image.open(f)
+            except Exception as e:
+                logger.warning(f"Failed to open image file {f}: {e}")
+                # Attempt to copy file to the "Other" folder
+                other_directory = os.path.join(args.output_directory, "Other")
+                os.makedirs(other_directory, exist_ok=True)
+                shutil.copyfile(f, os.path.join(other_directory, os.path.basename(f)))
+                continue
+
+            try:
+                # Extract EXIF data for datetime
+                exif_data = image._getexif()
+                if exif_data:
+                    for tag, value in exif_data.items():
+                        tag_name = TAGS.get(tag, tag)
+                        if tag_name == "DateTimeOriginal":
+                            date_time = value
+                            break
+                    else:
+                        date_time = None
+                else:
+                    date_time = None
+
+                if date_time is None:
+                    raise ValueError("No DateTimeOriginal found in EXIF data.")
+                year = date_time.split(":")[0]  # Extract the year from DateTimeOriginal
+            except Exception as e:
+                logger.warning(f"Failed to find suitable EXIF data for {f}: {e}")
+                year = "Other"
+
+            # Create the year directory or "Other" directory if it doesn't exist
+            year_directory = os.path.join(args.output_directory, year)
+            if not os.path.exists(year_directory):
+                os.makedirs(year_directory)
+                logger.info(f"Created directory: {year_directory}")
+
+            file_name = os.path.basename(f)
+            new_filepath = os.path.join(year_directory, file_name)
+
+            duplicate_exists = os.path.isfile(new_filepath)
+            if duplicate_exists and args.skip_overwrite_prompt:
+                continue
+            if not args.force_overwrite:
+                while duplicate_exists:
+                    new_filepath = (
+                        os.path.splitext(new_filepath)[0]
+                        + "_RESIZED"
+                        + os.path.splitext(new_filepath)[1]
+                    )
+                    duplicate_exists = os.path.isfile(new_filepath)
+
+            max_dim = args.resize_max_dim_pix
+            x, y = image.size
+
+            biggest_dim = max(x, y)
+
+            if max_dim > biggest_dim:
+                logger.warning(
+                    f"Max dimension {max_dim} is greater than image size = {image.size}. Copying file without resizing."
+                )
+                shutil.copyfile(f, new_filepath)
+                continue
+
+            try:
+                if x > y:
+                    ratio = max_dim / float(x)
+                else:
+                    ratio = max_dim / float(y)
+
+                new_x = int(ratio * x)
+                new_y = int(ratio * y)
+
+                resized_image = image.resize((new_x, new_y))
+
+                # Convert to RGB if needed before saving
+                if resized_image.mode != "RGB":
+                    resized_image = resized_image.convert("RGB")
+
+                try:
+                    exif = image.info.get("exif")
+                    resized_image.save(new_filepath, exif=exif)
+                except:
+                    logger.warning(f"No EXIF data found. Saving without EXIF.")
+                    resized_image.save(new_filepath)
+            except Exception as e:
+                logger.warning(f"Failed to resize image {f}: {e}")
+                # Copy file to the "Other" folder
+                other_directory = os.path.join(args.output_directory, "Other")
+                os.makedirs(other_directory, exist_ok=True)
+                shutil.copyfile(f, os.path.join(other_directory, os.path.basename(f)))
+                continue
+
+            if args.delete_originals:
+                os.remove(f)
+                logger.info(f"Deleted original image: {f}")
+
+            logger.info(f"Resized {f} to {new_filepath}.")
+            converted_count += 1
+
+        else:
+            # Handle non-image files by copying them directly to the output directory
+            year_from_path = f.parts[-2] if len(f.parts) >= 2 else "Other"
+            year_directory = os.path.join(args.output_directory, year_from_path)
+            os.makedirs(year_directory, exist_ok=True)
+            logger.info(f"Copying non-image file {f} to {year_directory}...")
+            shutil.copyfile(f, os.path.join(year_directory, os.path.basename(f)))
+
+    logger.info(f"Jobs completed. Processed {converted_count} of {num_files} files.")
+
+
+if __name__ == "__main__":
+    main()
+
+
+--- FILE: ./exif_date_adder.py ---
+import argparse
+import os
+import sys
+import logging
+from exif import Image
+from pathlib import Path
+import re
+
+img_formats = ['.png', '.jpg', '.jpeg']
+
+def is_image_file(filepath):
+    return os.path.splitext(filepath)[-1].lower() in img_formats
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input-directory', '-i', dest="input_directory", type=str, required=True,
+                        help='Directory in which to search for images and rename them.')
+    parser.add_argument('--recursive', '-r', dest='recursive', action='store_true',
+                        help='Search for images recursively in directories.')
+    parser.add_argument('--overwrite', '-o', dest='overwrite', action='store_true',
+                        help='Force overwrite of existing datetime string.')
+    parser.add_argument('--date', '-d', dest='date', type=str, required=True,
+                        help='Date to add. Note that timestamps will be incremented. Format: YYYY:MM:DD')
+                        
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    logging.basicConfig(handlers=[logging.FileHandler("debug.log"),
+                                  logging.StreamHandler()],
+                        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                        datefmt='%H:%M:%S',
+                        level=logging.INFO)
+
+    logger = logging.getLogger(__name__)
+
+    if not re.match('\d{4}:\d{2}:\d{2}', args.date):
+        logger.critical(f"Date format incorrect. See --help options.")
+        sys.exit()        
+
+    image_dir = os.path.abspath(args.input_directory)
+    args.input_directory = image_dir
+
+    logger.info(f"Initiating new run with args: {args}")
+    if not os.path.isdir(image_dir):
+        logger.critical(f"Specified directory was not found: {image_dir}")
+        sys.exit()
+
+    logger.info(f"Searching for images in {image_dir}...")
+
+    if args.recursive:
+        files = list(Path(image_dir).rglob("*"))
+    else:
+        files = list(Path(image_dir).glob("*"))
+
+    image_files = list(filter(is_image_file, files))
+    num_files = len(image_files)
+
+    logger.info(f"Found {num_files} files. Processing...")
+
+    converted_count = 0 
+    for f in image_files:
+        logger.info(f"Opening image: {f}...")
+        try:
+            with open(f, 'rb') as img_file:
+                image = Image(img_file)
+        except Exception as e:
+            logger.warning(f"Failed to open file {f}")
+            logger.debug(e)
+            continue
+
+        hours = converted_count // 3600
+        minutes = (converted_count % 3600) // 60
+        seconds  = (converted_count % 3600) % 60
+
+        try:
+            image.get("datetime_original")
+            if not args.overwrite:
+                logger.info("File already has EXIF date time stamp. Skipping.")
+                continue
+        except:
+            pass
+
+        image.datetime_original = f"{args.date} {hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        with open(f, 'wb') as img_file:
+            img_file.write(image.get_file())
+
+        converted_count += 1
+        if converted_count == (3600 * 24):
+            logger.warning("Maximum number of images reached for this day.")
+            break
+
+    logger.info(f"Jobs completed. Updated EXIF date {converted_count} of {num_files} files")
+
+if __name__ == "__main__":
+    main()
+
+
+--- FILE: ./rename_video.py ---
+import os
+from pathlib import Path
+
+from hachoir.metadata import extractMetadata
+from hachoir.parser import createParser
+
+# Supported video formats
+vid_formats = [".mp4", ".mov", ".avi"]
+
+
+def is_video_file(filepath):
+    return os.path.splitext(filepath)[-1].lower() in vid_formats
+
+
+# Function to rename video files based on metadata
+def rename_video_file(file_path, output_directory):
+    parser = createParser(str(file_path))  # Convert Path object to string
+    metadata = extractMetadata(parser)
+    date_time = metadata.get("creation_date")  # Extract creation date from metadata
+    year = date_time.year  # Extract the year from creation_date
+
+    orig_ext = os.path.splitext(file_path)[-1]
+    new_filename = date_time.strftime("%Y-%m-%d_%H-%M-%S") + orig_ext
+    new_filepath = os.path.join(output_directory, str(year), new_filename)
+
+    os.makedirs(os.path.dirname(new_filepath), exist_ok=True)
+    os.rename(file_path, new_filepath)
+
+
+# Example usage
+input_directory = "/Volumes/Evan Extern/05_Photos/Other/"
+output_directory = "/Volumes/Evan Extern/Other/"
+
+for file in Path(input_directory).rglob("*"):
+    if is_video_file(file):
+        rename_video_file(file, output_directory)
+
+
+--- FILE: ./google_uploader.py ---
+import json
+import os
+import re
+import sys
+
+import requests
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+# If modifying these SCOPES, delete the file token.json.
+SCOPES = ["https://www.googleapis.com/auth/photoslibrary"]
+
+
+def authenticate():
+    """Authenticate the user and return the credentials."""
+    creds = None
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open("token.json", "w") as token:
+            token.write(creds.to_json())
+    return creds
+
+
+def sanitize_filename(filename):
+    """Sanitize filename to ensure it contains only ASCII characters."""
+    return filename.encode("ascii", errors="ignore").decode("ascii")
+
+
+def upload_photo(session, file_path):
+    """Upload a photo to Google Photos."""
+    upload_url = "https://photoslibrary.googleapis.com/v1/uploads"
+    sanitized_filename = sanitize_filename(os.path.basename(file_path))
+    headers = {
+        "Authorization": f"Bearer {session.credentials.token}",
+        "Content-type": "application/octet-stream",
+        "X-Goog-Upload-File-Name": sanitized_filename,
+        "X-Goog-Upload-Protocol": "raw",
+    }
+
+    with open(file_path, "rb") as file:
+        response = requests.post(upload_url, headers=headers, data=file)
+
+    if response.status_code == 200:
+        return response.content.decode("utf-8")
+    else:
+        print(f"Failed to upload {file_path}: {response.content}")
+        return None
+
+
+def create_media_item(session, upload_token, description="Uploaded by script"):
+    """Create a media item in Google Photos."""
+    url = "https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate"
+    headers = {
+        "Authorization": f"Bearer {session.credentials.token}",
+        "Content-type": "application/json",
+    }
+    payload = json.dumps(
+        {
+            "newMediaItems": [
+                {
+                    "description": description,
+                    "simpleMediaItem": {"uploadToken": upload_token},
+                }
+            ]
+        }
+    )
+    response = requests.post(url, headers=headers, data=payload)
+    if response.status_code == 200:
+        print("Media item created successfully.")
+    else:
+        print(f"Failed to create media item: {response.content}")
+
+
+def main(directory):
+    creds = authenticate()
+    session = requests.Session()
+    session.credentials = creds
+
+    successful_uploads = 0
+    failed_uploads = []
+
+    # Regex pattern to match files starting with YYYY-MM-DD
+    date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            # Check if the filename starts with YYYY-MM-DD
+            if date_pattern.match(file) and file.lower().endswith(
+                ("png", "jpg", "jpeg")
+            ):
+                file_path = os.path.join(root, file)
+                try:
+                    print(f"Uploading {file_path}...")
+                    upload_token = upload_photo(session, file_path)
+                    if upload_token:
+                        create_media_item(session, upload_token)
+                        successful_uploads += 1
+                    else:
+                        failed_uploads.append(file_path)
+                except Exception as e:
+                    print(f"Error uploading {file_path}: {e}")
+                    failed_uploads.append(file_path)
+            else:
+                print(f"Skipping {file}, does not start with YYYY-MM-DD.")
+
+    print(
+        f"Upload completed: {successful_uploads} files successfully uploaded, {len(failed_uploads)} files failed."
+    )
+
+    if len(failed_uploads) > 0:
+        with open("failed_uploads.txt", "w") as f:
+            for failed_file in failed_uploads:
+                f.write(f"{failed_file}\n")
+
+        print("Failed uploads written to failed_uploads.txt.")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python upload_photos.py <directory>")
+    else:
+        main(sys.argv[1])
+
+
+--- FILE: ./image_renamer.py ---
+import argparse
+import logging
+import os
+import shutil
+import sys
+from pathlib import Path
+
+from exif import Image
+from hachoir.metadata import extractMetadata
+from hachoir.parser import createParser
+
+img_formats = [".png", ".jpg", ".jpeg"]
+vid_formats = [".mp4", ".mov", ".avi", ".mkv"]
+
+
+def is_media_file(filepath):
+    return os.path.splitext(filepath)[-1].lower() in img_formats + vid_formats
+
+
+def is_image_file(filepath):
+    return os.path.splitext(filepath)[-1].lower() in img_formats
+
+
+def is_video_file(filepath):
+    return os.path.splitext(filepath)[-1].lower() in vid_formats
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--input-directory",
+        "-i",
+        dest="input_directory",
+        type=str,
+        required=True,
+        help="Directory in which to search for images and videos to rename.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        dest="output_directory",
+        type=str,
+        required=True,
+        help="Root directory in which to save the renamed files by year.",
+    )
+    parser.add_argument(
+        "--recursive",
+        "-r",
+        dest="recursive",
+        action="store_true",
+        help="Search for files recursively in directories.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        "-f",
+        dest="force_overwrite",
+        action="store_true",
+        help="Force overwrite of existing files. Otherwise, a 'D' is appended to the filename.",
+    )
+    parser.add_argument(
+        "--skip",
+        "-s",
+        dest="skip_overwrite_prompt",
+        action="store_true",
+        help="If a duplicate file is found, do not overwrite and do not ask user.",
+    )
+    parser.add_argument(
+        "--delete-orig",
+        "-D",
+        dest="delete_originals",
+        action="store_true",
+        help="Moves the originals with new names. Without this option, a copy is made instead with a new name.",
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    logging.basicConfig(
+        handlers=[logging.FileHandler("debug.log"), logging.StreamHandler()],
+        format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+        level=logging.INFO,
+    )
+
+    logger = logging.getLogger(__name__)
+
+    image_dir = os.path.abspath(args.input_directory)
+    args.input_directory = image_dir
+    args.output_directory = os.path.abspath(args.output_directory)
+    other_directory = os.path.join(args.output_directory, "Other")
+
+    logger.info(f"Initiating new run with args: {args}")
+    if not os.path.isdir(image_dir):
+        logger.critical(f"Specified directory was not found: {image_dir}")
+        sys.exit()
+    if not os.path.isdir(args.output_directory):
+        logger.critical(f"Specified directory was not found: {args.output_directory}")
+        sys.exit()
+
+    if not os.path.exists(other_directory):
+        os.makedirs(other_directory)
+
+    logger.info(f"Searching for media files in {image_dir}...")
+
+    if args.recursive:
+        files = list(Path(image_dir).rglob("*"))
+    else:
+        files = list(Path(image_dir).glob("*"))
+
+    media_files = list(filter(is_media_file, files))
+    num_files = len(media_files)
+
+    logger.info(f"Found {num_files} files. Processing...")
+
+    converted_count = 0
+    moved_to_other_count = 0
+
+    for f in media_files:
+        logger.info(f"Opening file: {f}...")
+        year = None
+        date_time = None
+
+        if is_image_file(f):
+            try:
+                with open(f, "rb") as img_file:
+                    image = Image(img_file)
+                date_time = image.get("datetime_original")
+                if date_time is None:
+                    raise ValueError("No datetime_original found in EXIF data.")
+                year = date_time.split(":")[0]
+            except Exception as e:
+                logger.warning(
+                    f"No suitable metadata found for {f}. Moving to 'Other'."
+                )
+                year = "Other"
+                moved_to_other_count += 1
+        elif is_video_file(f):
+            try:
+                parser = createParser(str(f))  # Convert Path object to string
+                metadata = extractMetadata(parser)
+                if metadata and metadata.has("creation_date"):
+                    date_time = metadata.get("creation_date").strftime(
+                        "%Y-%m-%d_%H-%M-%S"
+                    )
+                    year = str(metadata.get("creation_date").year)
+                else:
+                    raise ValueError("No creation date found in metadata.")
+            except Exception as e:
+                logger.warning(
+                    f"No suitable metadata found for {f}. Moving to 'Other'."
+                )
+                year = "Other"
+                moved_to_other_count += 1
+
+        year_directory = os.path.join(args.output_directory, year)
+        if not os.path.exists(year_directory):
+            os.makedirs(year_directory)
+            logger.info(f"Created directory: {year_directory}")
+
+        orig_ext = os.path.splitext(f)[-1]
+        new_filename = (
+            date_time.replace(":", "-").replace(" ", "_") + orig_ext
+            if year != "Other"
+            else os.path.basename(f)
+        )
+        new_filepath = os.path.join(year_directory, new_filename)
+
+        duplicate_exists = os.path.isfile(new_filepath)
+        if duplicate_exists and args.skip_overwrite_prompt:
+            continue
+        if not args.force_overwrite:
+            while duplicate_exists:
+                new_filepath = (
+                    os.path.splitext(new_filepath)[0]
+                    + "D"
+                    + os.path.splitext(new_filepath)[1]
+                )
+                duplicate_exists = os.path.isfile(new_filepath)
+
+        if args.delete_originals:
+            os.rename(f, new_filepath)
+            logger.info(f"Moved {f} to {new_filepath}.")
+        else:
+            shutil.copyfile(f, new_filepath)
+            logger.info(f"Copied {f} to {new_filepath}.")
+
+        converted_count += 1
+
+    logger.info(
+        f"Jobs completed. Renamed {converted_count} of {num_files} files. Moved {moved_to_other_count} files to 'Other' directory."
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+
+--- FILE: ./google_downloader.py ---
+import json
+import os
+import sys
+from datetime import datetime
+
+import requests
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+# If modifying these SCOPES, delete the file token.json.
+SCOPES = ["https://www.googleapis.com/auth/photoslibrary"]
+
+
+def authenticate():
+    """Authenticate the user and return the credentials."""
+    creds = None
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open("token.json", "w") as token:
+            token.write(creds.to_json())
+    return creds
+
+
+def list_media_items(session, start_date, end_date):
+    """List all media items between two dates."""
+    url = "https://photoslibrary.googleapis.com/v1/mediaItems:search"
+    headers = {
+        "Authorization": f"Bearer {session.credentials.token}",
+        "Content-type": "application/json",
+    }
+    payload = json.dumps(
+        {
+            "filters": {
+                "dateFilter": {
+                    "ranges": [
+                        {
+                            "startDate": {
+                                "year": start_date.year,
+                                "month": start_date.month,
+                                "day": start_date.day,
+                            },
+                            "endDate": {
+                                "year": end_date.year,
+                                "month": end_date.month,
+                                "day": end_date.day,
+                            },
+                        }
+                    ]
+                }
+            },
+            "pageSize": 100,
+        }
+    )
+
+    media_items = []
+    next_page_token = None
+
+    while True:
+        if next_page_token:
+            payload_dict = json.loads(payload)
+            payload_dict["pageToken"] = next_page_token
+            payload = json.dumps(payload_dict)
+
+        response = requests.post(url, headers=headers, data=payload)
+        if response.status_code != 200:
+            print(f"Failed to list media items: {response.content}")
+            break
+
+        data = response.json()
+        media_items.extend(data.get("mediaItems", []))
+        next_page_token = data.get("nextPageToken", None)
+        if not next_page_token:
+            break
+
+    return media_items
+
+
+def download_photo(session, media_item, download_dir):
+    """Download a photo."""
+    base_url = media_item["baseUrl"]
+    filename = os.path.join(download_dir, f"{media_item['id']}.jpg")
+    response = requests.get(f"{base_url}=d")
+    if response.status_code == 200:
+        with open(filename, "wb") as file:
+            file.write(response.content)
+        print(f"Downloaded {filename}")
+    else:
+        print(f"Failed to download {filename}: {response.content}")
+
+
+def main(start_date_str, end_date_str, download_dir):
+    print("Starting google_downloader...")
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+    end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+
+    creds = authenticate()
+    session = requests.Session()
+    session.credentials = creds
+
+    media_items = list_media_items(session, start_date, end_date)
+    print(
+        f"Found {len(media_items)} media items between {start_date_str} and {end_date_str}"
+    )
+
+    for media_item in media_items:
+        download_photo(session, media_item, download_dir)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python download_photos.py <start_date> <end_date> <download_dir>")
+        print("Dates should be in YYYY-MM-DD format")
+    else:
+        main(sys.argv[1], sys.argv[2], sys.argv[3])
+

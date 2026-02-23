@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 
 import requests
@@ -85,9 +86,15 @@ def main(directory):
     successful_uploads = 0
     failed_uploads = []
 
+    # Regex pattern to match files starting with YYYY-MM-DD
+    date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
     for root, dirs, files in os.walk(directory):
         for file in files:
-            if file.lower().endswith(("png", "jpg", "jpeg")):
+            # Check if the filename starts with YYYY-MM-DD
+            if date_pattern.match(file) and file.lower().endswith(
+                ("png", "jpg", "jpeg")
+            ):
                 file_path = os.path.join(root, file)
                 try:
                     print(f"Uploading {file_path}...")
@@ -100,6 +107,8 @@ def main(directory):
                 except Exception as e:
                     print(f"Error uploading {file_path}: {e}")
                     failed_uploads.append(file_path)
+            else:
+                print(f"Skipping {file}, does not start with YYYY-MM-DD.")
 
     print(
         f"Upload completed: {successful_uploads} files successfully uploaded, {len(failed_uploads)} files failed."
